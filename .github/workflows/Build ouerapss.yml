@@ -1,4 +1,4 @@
-       name: Build OU Escape Route APK
+name: Build OU Escape Route APK
 
 on:
   workflow_dispatch:
@@ -111,88 +111,6 @@ jobs:
         shell: bash
         run: |
           find "$PROJECT_DIR" -type f -path "*/build/outputs/apk/*.apk" -print
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: OU-Escape-Route-debug-apk
-          path: "${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk"
-          if-no-files-found: error   echo "Extracted files:"
-          find extracted -maxdepth 4 -type f | head -100
-
-      - name: Find Android project root
-        shell: bash
-        run: |
-          set -e
-
-          SETTINGS_FILE="$(find extracted \
-            \( -name "settings.gradle.kts" -o -name "settings.gradle" \) \
-            -type f -print -quit)"
-
-          if [ -z "$SETTINGS_FILE" ]; then
-            echo "ERROR: No settings.gradle or settings.gradle.kts file was found."
-            echo "The ZIP may not contain a complete Android project."
-            exit 1
-          fi
-
-          PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
-
-          echo "Android project root: $PROJECT_DIR"
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.1.1"
-
-      - name: Generate Gradle wrapper
-        shell: bash
-        run: |
-          set -e
-          cd "$PROJECT_DIR"
-
-          if [ ! -f "gradlew" ]; then
-            echo "Gradle wrapper is missing. Generating it."
-            gradle wrapper --gradle-version 8.1.1
-          fi
-
-      - name: Install Android SDK
-        shell: bash
-        run: |
-          set -e
-
-          yes | sdkmanager --licenses || true
-
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-34" \
-            "build-tools;34.0.0"
-
-      - name: Make Gradle wrapper executable
-        run: chmod +x "$PROJECT_DIR/gradlew"
-
-      - name: Clean project
-        shell: bash
-        run: |
-          set -e
-          cd "$PROJECT_DIR"
-          ./gradlew clean --no-daemon
-
-      - name: Build debug APK
-        shell: bash
-        run: |
-          set -e
-          cd "$PROJECT_DIR"
-          ./gradlew assembleDebug --stacktrace --no-daemon
-
-      - name: Find generated APK
-        shell: bash
-        run: |
-          set -e
-          find "$PROJECT_DIR" \
-            -type f \
-            -path "*/build/outputs/apk/*.apk" \
-            -print
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
