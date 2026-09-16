@@ -1,69 +1,119 @@
-- name: Find Android project root
-  shell: bash
-  run: |
-    set -e
+name: Build OU Escape Route APK
 
-    echo "Project files:"
-    find . -maxdepth 5 \
-      \( -name "settings.gradle" -o -name "settings.gradle.kts" -o -name "build.gradle" -o -name "build.gradle.kts" \) \
-      -print
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
 
-    SETTINGS_FILE="$(find . -name "settings.gradle.kts" -o -name "settings.gradle" | head -n 1)"
+jobs:
+  build:
+    runs-on: ubuntu-latest
 
-    if [ -z "$SETTINGS_FILE" ]; then
-      echo "ERROR: No Gradle settings file found."
-      exit 1
-    fi
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
-    echo "Detected project root: $PROJECT_DIR"
-    echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
 
-- name: Configure Android SDK
-  run: |
-    echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
-    echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
-    echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+      - name: Extract Android project
+        shell: bash
+        run: |
+          set -e
 
-- name: Install Android SDK 34
-  run: |
-    yes | sdkmanager --licenses || true
-    sdkmanager \
-      "platform-tools" \
-      "platforms;android-34" \
-      "build-tools;34.0.0"
+          if [ ! -f "OU-Escape-Route-GitHub-Actions-ready.zip" ]; then
+            echo "ERROR: ZIP archive was not found."
+            exit 1
+          fi
 
-- name: Set up Gradle
-  uses: gradle/actions/setup-gradle@v4
-  with:
-    gradle-version: "8.1.1"
+          mkdir -p extracted
+          unzip -o "OU-Escape-Route-GitHub-Actions-ready.zip" -d extracted
 
-- name: Generate Gradle wrapper
-  shell: bash
-  run: |
-    set -e
-    cd "$PROJECT_DIR"
+          echo "Extracted files:"
+          find extracted -maxdepth 4 -type f | head -100
 
-    if [ ! -f "./gradlew" ]; then
-      gradle wrapper --gradle-version 8.1.1
-    fi
+      - name: Find Android project root
+        shell: bash
+        run: |
+          set -e
 
-- name: Make Gradle wrapper executable
-  run: chmod +x "$PROJECT_DIR/gradlew"
+          SETTINGS_FILE="$(find extracted \
+            \( -name "settings.gradle.kts" -o -name "settings.gradle" \) \
+            -type f -print -quit)"
 
-- name: Clean project
-  run: |
-    cd "$PROJECT_DIR"
-    ./gradlew clean --no-daemon
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "ERROR: No settings.gradle or settings.gradle.kts file was found."
+            echo "The ZIP may not contain a complete Android project."
+            exit 1
+          fi
 
-- name: Build APK
-  run: |
-    cd "$PROJECT_DIR"
-    ./gradlew assembleDebug --stacktrace --no-daemon
+          PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
 
-- name: Upload APK
-  uses: actions/upload-artifact@v4
-  with:
-    name: OU-Escape-Route-debug-apk
-    path: "${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk"
-    if-no-files-found: error
+          echo "Android project root: $PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.1.1"
+
+      - name: Generate Gradle wrapper
+        shell: bash
+        run: |
+          set -e
+          cd "$PROJECT_DIR"
+
+          if [ ! -f "gradlew" ]; then
+            echo "Gradle wrapper is missing. Generating it."
+            gradle wrapper --gradle-version 8.1.1
+          fi
+
+      - name: Install Android SDK
+        shell: bash
+        run: |
+          set -e
+
+          yes | sdkmanager --licenses || true
+
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0"
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x "$PROJECT_DIR/gradlew"
+
+      - name: Clean project
+        shell: bash
+        run: |
+          set -e
+          cd "$PROJECT_DIR"
+          ./gradlew clean --no-daemon
+
+      - name: Build debug APK
+        shell: bash
+        run: |
+          set -e
+          cd "$PROJECT_DIR"
+          ./gradlew assembleDebug --stacktrace --no-daemon
+
+      - name: Find generated APK
+        shell: bash
+        run: |
+          set -e
+          find "$PROJECT_DIR" \
+            -type f \
+            -path "*/build/outputs/apk/*.apk" \
+            -print
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: OU-Escape-Route-debug-apk
+          path: "${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk"
+          if-no-files-found: error
