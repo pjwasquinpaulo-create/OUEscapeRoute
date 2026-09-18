@@ -20,7 +20,33 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
+
+      - name: Extract Android project from ZIP
+        shell: bash
+        run: |
+          set -e
+
+          ZIP_FILE="$(find "$GITHUB_WORKSPACE" -maxdepth 2 -type f -iname '*.zip' | head -n 1)"
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No .zip project file found."
+            find "$GITHUB_WORKSPACE" -maxdepth 3 -type f | sort
+            exit 1
+          fi
+
+          mkdir -p "$GITHUB_WORKSPACE/project"
+          unzip -q "$ZIP_FILE" -d "$GITHUB_WORKSPACE/project"
+
+          PROJECT_DIR="$(find "$GITHUB_WORKSPACE/project" -type f \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) -print -quit | xargs dirname)"
+
+          if [ -z "$PROJECT_DIR" ] || [ "$PROJECT_DIR" = "." ]; then
+            echo "ERROR: Could not find Android project directory."
+            find "$GITHUB_WORKSPACE/project" -maxdepth 5 -type f | sort
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Project directory: $PROJECT_DIR"
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -29,14 +55,14 @@ jobs:
         shell: bash
         run: |
           set -e
+          cd "$PROJECT_DIR"
 
           if [ -f app/build.gradle.kts ]; then
             FILE="app/build.gradle.kts"
           elif [ -f app/build.gradle ]; then
             FILE="app/build.gradle"
           else
-            echo "ERROR: Could not find app/build.gradle.kts or app/build.gradle"
-            find . -maxdepth 3 -type f \( -name 'build.gradle' -o -name 'build.gradle.kts' \) | sort
+            echo "ERROR: Could not find app/build.gradle or app/build.gradle.kts"
             exit 1
           fi
 
@@ -60,16 +86,14 @@ jobs:
           yes | sdkmanager --licenses
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
-      - name: Grant execute permission to Gradle wrapper
-        if: hashFiles('**/gradlew') != ''
-        shell: bash
-        run: chmod +x gradlew
-
       - name: Build debug APK
         shell: bash
         run: |
           set -e
+          cd "$PROJECT_DIR"
+
           if [ -f gradlew ]; then
+            chmod +x gradlew
             ./gradlew assembleDebug --no-daemon --stacktrace
           else
             gradle assembleDebug --no-daemon --stacktrace
@@ -79,4 +103,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: app-debug
-          path: app/build/outputs/apk/debug/*.apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
