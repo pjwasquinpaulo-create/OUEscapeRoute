@@ -24,11 +24,11 @@ jobs:
       - name: Extract Android project from ZIP
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
           ZIP_FILE="$(find "$GITHUB_WORKSPACE" -maxdepth 2 -type f -iname '*.zip' | head -n 1)"
 
-          if [ -z "$ZIP_FILE" ]; then
+          if [ -z "${ZIP_FILE:-}" ]; then
             echo "ERROR: No ZIP project file found."
             find "$GITHUB_WORKSPACE" -maxdepth 3 -type f | sort
             exit 1
@@ -37,9 +37,9 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/project"
           unzip -q "$ZIP_FILE" -d "$GITHUB_WORKSPACE/project"
 
-          PROJECT_DIR="$(find "$GITHUB_WORKSPACE/project" -type f \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) -print -quit | xargs dirname)"
+          PROJECT_DIR="$(find "$GITHUB_WORKSPACE/project" -type f \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) -print -quit | xargs -r dirname)"
 
-          if [ -z "$PROJECT_DIR" ] || [ "$PROJECT_DIR" = "." ]; then
+          if [ -z "${PROJECT_DIR:-}" ] || [ "${PROJECT_DIR}" = "." ]; then
             echo "ERROR: Could not find Android project directory."
             find "$GITHUB_WORKSPACE/project" -maxdepth 5 -type f | sort
             exit 1
@@ -52,25 +52,46 @@ jobs:
         shell: bash
         run: |
           echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
-          echo "PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/build-tools/34.0.0:$PATH" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/build-tools/34.0.0" >> "$GITHUB_PATH"
 
       - name: Install Android SDK components
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager \
+            "cmdline-tools;latest" \
             "platform-tools" \
             "platforms;android-34" \
             "build-tools;34.0.0"
 
+      - name: Patch Gradle wrapper for Android compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+
+          if [ ! -f gradle/wrapper/gradle-wrapper.properties ]; then
+            echo "ERROR: gradle/wrapper/gradle-wrapper.properties not found"
+            exit 1
+          fi
+
+          # Gradle 9.x is incompatible with older AGP builds that still use the old DependencyHandler.module API.
+          # Use Gradle 8.13, which is compatible with Android Gradle Plugin versions in this range.
+          sed -i 's#distributionUrl=.*#distributionUrl=https\\://services.gradle.org/distributions/gradle-8.13-bin.zip#' \
+            gradle/wrapper/gradle-wrapper.properties
+
+          grep -n "distributionUrl" gradle/wrapper/gradle-wrapper.properties
+
       - name: Patch Material dependency
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           cd "$PROJECT_DIR"
 
+          FILE=""
           if [ -f app/build.gradle.kts ]; then
             FILE="app/build.gradle.kts"
           elif [ -f app/build.gradle ]; then
@@ -80,12 +101,12 @@ jobs:
             exit 1
           fi
 
-          if grep -q "com.google.android.material:material" "$FILE"; then
-            echo "Material dependency already exists."
-          elif [ "$FILE" = "app/build.gradle.kts" ]; then
-            sed -i '/^[[:space:]]*dependencies[[:space:]]*{/a\    implementation("com.google.android.material:material:1.12.0")' "$FILE"
-          else
-            sed -i '/^[[:space:]]*dependencies[[:space:]]*{/a\    implementation "com.google.android.material:material:1.12.0"' "$FILE"
+          if ! grep -q "com.google.android.material:material" "$FILE"; then
+            if [ "$FILE" = "app/build.gradle.kts" ]; then
+              sed -i '/^[[:space:]]*dependencies[[:space:]]*{/a\    implementation("com.google.android.material:material:1.12.0")' "$FILE"
+            else
+              sed -i '/^[[:space:]]*dependencies[[:space:]]*{/a\    implementation "com.google.android.material:material:1.12.0"' "$FILE"
+            fi
           fi
 
           grep -n "com.google.android.material" "$FILE"
@@ -93,15 +114,12 @@ jobs:
       - name: Build debug APK
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           cd "$PROJECT_DIR"
 
-          if [ -f gradlew ]; then
-            chmod +x gradlew
-            ./gradlew assembleDebug --no-daemon --stacktrace
-          else
-            gradle assembleDebug --no-daemon --stacktrace
-          fi
+          chmod +x gradlew
+          ./gradlew --version
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
